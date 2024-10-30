@@ -3,22 +3,68 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <sys/types.h>
 
-// adds NULL at the end of cmd
-void copy_ptrs_from_to(char** to, char** from, int from_ix, int to_ix)
-{
-    for (int dest_ix = 0; dest_ix < to_ix - from_ix + 1; dest_ix++)
-        to[dest_ix] = from[from_ix + dest_ix];
-    to[to_ix - from_ix + 1] = NULL;
+void add_char_to_string(char* word, char c) {
+    int len = strlen(word);
+    word[len] = c;
+    word[len + 1] = '\0';
+}
+
+void break_into_words(char* input, char* words[], char break_on) {
+    int word_count = 0; // index into words output array
+    char* current_char = input;
+
+    char word_so_far[1000];
+    strcpy(word_so_far, "");
+
+    while (*current_char != '\0') {
+        if (*current_char == break_on) {
+            words[word_count++] = strdup(word_so_far);
+            word_so_far[0] = '\0'; // set back to empty string
+        } else {
+            add_char_to_string(word_so_far, *current_char);
+        }
+        current_char++;
+    }
+    words[word_count++] = strdup(word_so_far);
+
+    words[word_count] = NULL;
+}
+
+bool find_absolute_path(char* no_path, char* with_path) {
+    char* directories[1000];
+
+    break_into_words(getenv("PATH"), directories, ':');
+
+    for (int ix = 0; ix < 1000 && directories[ix] != NULL; ix++) {
+        strcpy(with_path, directories[ix]);
+        strcat(with_path, "/");
+        strcat(with_path, no_path);
+        if (access(with_path, X_OK) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int main(int argc, char* argv[])
 {
     if (argc < 4) {
         fprintf(stderr,
-            "Usage: %s <command1> [<arg1> <arg2> ...] /// <command2> [<arg1> "
-            "<arg2> ...] \n",
-            argv[0]);
+            "Usage: %s <input.txt> <command> <output.txt>\n", argv[0]);
+        return 1;
+    }
+
+    char* command_args[100];
+    char absolute_path[100];
+
+    // Separate command argument into arguments (if needed)
+    // and get the absolute path of the command
+    break_into_words(argv[2], command_args, ' ');
+    if (find_absolute_path(command_args[0], absolute_path) == false) {
+        printf("Could not find absolute path for %s\n", command_args[0]);
         return 1;
     }
 
@@ -45,37 +91,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // +1 for NULL
-    char** first_cmd = (char**)malloc(sizeof(char*) * argc + 1);
- 
-    // SKIP FIRST TWO ARGS (./this <inputFilename>)
-    // Then read until output filename
-    copy_ptrs_from_to(first_cmd,  argv, 2, argc - 2);
-
-    // check if the command is an absolute path
-    if (access(first_cmd[0], X_OK) != 0) {
-        fprintf(stderr, "%s is not an ABSOLUTE PATH!\n", first_cmd[0]);
-        for (char* path = strtok(getenv("PATH"), ":"); path != NULL;
-                   path = strtok(NULL, ":")) {
-            printf("PATH: %s\n", path);
-            
-            char new_path[64];
-            new_path[0] = '\0';
-            strcat(new_path, path);
-            strcat(new_path, "/");
-            strcat(new_path, first_cmd[0]);
-            
-            printf("Testing PATH: %s\n", new_path);
-            if (access(new_path, X_OK) == 0) {
-                printf("Found executable in PATH: %s\n", path);
-                printf("ABSOLUTE path: %s\n", new_path);
-                first_cmd[0] = new_path;
-                break;
-            }
-        }
-    }
-
-    // first_cmd takes in input from fd_in and outputs to fd_out
+    // Command takes in input from fd_in and outputs to fd_out
     int cmd_pid = fork();
     if (cmd_pid == 0) {
         dup2(fd_in, STDIN_FILENO);   // Redirect input
@@ -84,9 +100,9 @@ int main(int argc, char* argv[])
         dup2(fd_out, STDOUT_FILENO); // Redirect output
         close(fd_out);
 
-        execve(first_cmd[0], first_cmd, NULL);
+        execve(absolute_path, command_args, NULL);
 
-        fprintf(stderr, "Failed to execute first: %s\n", first_cmd[0]);
+        fprintf(stderr, "Failed to execute first: %s\n", command_args[0]);
         // children should exit if exec fails
         _exit(1);
     }
